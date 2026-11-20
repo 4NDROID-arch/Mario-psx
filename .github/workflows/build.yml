@@ -1,0 +1,136 @@
+name: Build VIZO MARIO PSX
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    tags: [ "v*" ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build unzip curl python3
+
+      - name: Download and install the COMPLETE PSn00bSDK release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.request
+
+          api = "https://api.github.com/repos/Lameguy64/PSn00bSDK/releases/latest"
+          req = urllib.request.Request(
+              api,
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "VIZO-MARIO-PSX"
+              }
+          )
+          release = json.load(urllib.request.urlopen(req))
+          assets = release.get("assets", [])
+
+          # The SDK package is NOT the separate gcc-mipsel toolchain archive.
+          matches = [
+              a for a in assets
+              if a["name"].lower().startswith("psn00bsdk-")
+              and "linux" in a["name"].lower()
+              and a["name"].lower().endswith(".zip")
+          ]
+
+          if not matches:
+              print("Release:", release.get("tag_name"))
+              print("Available assets:")
+              for a in assets:
+                  print(" -", a["name"])
+              raise SystemExit(
+                  "Could not find the complete PSn00bSDK Linux package. "
+                  "The GCC-only archive is not sufficient."
+              )
+
+          asset = matches[0]
+          print("Downloading complete SDK:", asset["name"])
+          req = urllib.request.Request(
+              asset["browser_download_url"],
+              headers={"User-Agent": "VIZO-MARIO-PSX"}
+          )
+          with urllib.request.urlopen(req) as response, open("psn00bsdk-full.zip", "wb") as out:
+              out.write(response.read())
+          PY
+
+          mkdir -p "$HOME/psn00bsdk"
+          unzip -q -o psn00bsdk-full.zip -d "$HOME/psn00bsdk"
+
+          SDK_CMAKE="$(find "$HOME/psn00bsdk" -type f -path '*/lib/libpsn00b/cmake/sdk.cmake' -print -quit)"
+          if [ -z "$SDK_CMAKE" ]; then
+            echo "::error::The downloaded archive did not contain lib/libpsn00b/cmake/sdk.cmake"
+            find "$HOME/psn00bsdk" -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          SDK_ROOT="${SDK_CMAKE%/lib/libpsn00b/cmake/sdk.cmake}"
+          SDK_LIBS="$SDK_ROOT/lib/libpsn00b"
+
+          echo "PSN00BSDK_LIBS=$SDK_LIBS" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/bin" >> "$GITHUB_PATH"
+
+          test -x "$SDK_ROOT/bin/mkpsxiso" || {
+            echo "::error::mkpsxiso was not found in the complete SDK package"
+            find "$SDK_ROOT" -iname '*mkpsxiso*' -o -iname 'elf2x'
+            exit 1
+          }
+
+          test -f "$SDK_LIBS/cmake/sdk.cmake"
+          test -d "$SDK_ROOT/include"
+          echo "PSn00bSDK root: $SDK_ROOT"
+          echo "PSn00bSDK libraries: $SDK_LIBS"
+          "$SDK_ROOT/bin/mipsel-none-elf-gcc" --version | head -1
+
+      - name: Configure project
+        run: cmake --preset default
+
+      - name: Build PS1 executable and BIN/CUE
+        run: cmake --build build --verbose
+
+      - name: Verify disc outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          find build -maxdepth 3 -type f \( -iname '*.bin' -o -iname '*.cue' -o -iname '*.exe' \) -print
+          BIN="$(find build -type f -iname 'VIZO_MARIO.bin' -print -quit)"
+          CUE="$(find build -type f -iname 'VIZO_MARIO.cue' -print -quit)"
+          EXE="$(find build -type f -iname 'vizo.exe' -print -quit)"
+          test -n "$BIN" && test -s "$BIN"
+          test -n "$CUE" && test -s "$CUE"
+          test -n "$EXE" && test -s "$EXE"
+          mkdir -p dist
+          cp "$BIN" dist/VIZO_MARIO.bin
+          cp "$CUE" dist/VIZO_MARIO.cue
+          cp "$EXE" dist/VIZO_MARIO.exe
+          echo "Disc image files successfully created."
+
+      - name: Upload BIN/CUE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIZO-MARIO-PSX-BIN-CUE
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release on version tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/VIZO_MARIO.bin
+            dist/VIZO_MARIO.cue
+            dist/VIZO_MARIO.exe

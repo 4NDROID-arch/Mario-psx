@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iso_project image_name="VIZO_MARIO.bin" cue_sheet="VIZO_MARIO.cue">
+  <track type="data" cdvd_style="false">
+    <identifiers
+      system="PLAYSTATION"
+      application="PLAYSTATION"
+      volume="VIZOMARIO"
+      volume_set="VIZOMARIO"
+      publisher="VIZO XITS"
+      data_preparer="VIZO XITS"
+    />
+    <directory_tree>
+      <file name="SYSTEM.CNF" type="data" source="${CMAKE_CURRENT_BINARY_DIR}/system.cnf"/>
+      <file name="VIZO.EXE" type="data" source="${CMAKE_CURRENT_BINARY_DIR}/vizo.exe"/>
+      <dummy sectors="512"/>
+    </directory_tree>
+  </track>
+</iso_project>
